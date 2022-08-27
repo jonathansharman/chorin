@@ -5,3 +5,4 @@ version = "0.1.0"
 
 [dependencies]
 cursive = {version = "0.19.0", default-features = false, features = ["crossterm-backend"]}
+rand = "0.8.5"
