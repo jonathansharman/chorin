@@ -1,7 +1,8 @@
-use std::fmt::Display;
+use std::{cell::RefCell, fmt::Display, rc::Rc};
 
 use cursive::{
 	direction::Orientation,
+	event::Key,
 	view::{Nameable, Resizable, Scrollable},
 	views::{
 		Dialog, EditView, LinearLayout, Panel, SelectView, SliderView, TextView,
@@ -10,6 +11,7 @@ use cursive::{
 };
 use rand::seq::SliceRandom;
 
+#[derive(Debug)]
 enum Priority {
 	Low,
 	Mid,
@@ -26,17 +28,22 @@ impl Display for Priority {
 	}
 }
 
+#[derive(Debug)]
 struct Chore {
 	title: String,
 	cost: u32,
 	priority: Priority,
 }
 
-fn main() {
-	let mut siv = cursive::default();
+struct State {
+	name: String,
+	due: Vec<Chore>,
+}
 
-	let name = "Username";
-	let chores_due = vec![
+type SharedState = Rc<RefCell<State>>;
+
+fn main() {
+	let due = vec![
 		Chore {
 			title: "Chore 1".to_string(),
 			cost: 5,
@@ -53,15 +60,27 @@ fn main() {
 			priority: Priority::Low,
 		},
 	];
+	let state = Rc::new(RefCell::new(State {
+		name: "Username".to_string(),
+		due,
+	}));
 
-	siv.add_layer(get_main_menu(&chores_due, name));
-
-	// s.add_layer(
-	// 	Dialog::text(text)
-	// 		.title("Selection")
-	// 		.button("Quit", |s| s.quit()),
-	// );
-
+	let mut siv = cursive::default();
+	siv.add_layer(get_main_menu(state.clone()));
+	siv.add_global_callback(Key::Del, move |s| {
+		s.call_on_name("due-select", |due_select: &mut SelectView<usize>| {
+			if let Some(id) = due_select.selected_id() {
+				state.borrow_mut().due.remove(id);
+				due_select.remove_item(id);
+			}
+		});
+		s.add_layer(Dialog::info(format!(
+			"Now there are {} items: {:?}",
+			state.borrow().due.len(),
+			state.borrow().due,
+		)));
+	});
+	siv.add_global_callback('q', |s| s.quit());
 	siv.run();
 }
 
@@ -74,13 +93,15 @@ const TITLE_FNS: &[fn(&str) -> String] = &[
 	|name| format!("Back to chorin', {}.", name),
 ];
 
-fn get_main_menu(chores: &[Chore], name: &str) -> impl View {
+fn get_main_menu(state: SharedState) -> impl View {
 	// Choose a title.
-	let title = TITLE_FNS.choose(&mut rand::thread_rng()).unwrap()(name);
+	let title = TITLE_FNS.choose(&mut rand::thread_rng()).unwrap()(
+		&state.borrow().name,
+	);
 	// Add a SelectView for the currently due chores.
-	let chore_select = SelectView::new()
+	let due_select = SelectView::new()
 		.autojump()
-		.with_all(chores.iter().enumerate().map(|(idx, chore)| {
+		.with_all(state.borrow().due.iter().enumerate().map(|(idx, chore)| {
 			let label = format!(
 				"{}. {} ({}) [{}]",
 				idx + 1,
@@ -90,23 +111,23 @@ fn get_main_menu(chores: &[Chore], name: &str) -> impl View {
 			);
 			(label, idx)
 		}))
-		.with_name("chore-select")
+		.with_name("due-select")
 		.scrollable();
 	// Arrange everything vertically.
 	Panel::new(
 		LinearLayout::new(Orientation::Vertical)
 			// General hotkeys
 			.child(
-				TextView::new("(e) edit chores (p) switch profile")
+				TextView::new("(e) edit chores (p) switch profile (q) quit")
 					.fixed_height(2),
 			)
-			// Due tasks
+			// Due chores
 			.child(
 				LinearLayout::new(Orientation::Vertical)
 					.child(TextView::new(
 						"(c) complete (o) obviate (del) abrogate",
 					))
-					.child(chore_select),
+					.child(due_select),
 			),
 	)
 	.title(title)
