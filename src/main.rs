@@ -2,12 +2,11 @@ use std::{cell::RefCell, fmt::Display, rc::Rc};
 
 use cursive::{
 	direction::Orientation,
-	event::Key,
 	view::{Nameable, Resizable, Scrollable},
 	views::{
 		Dialog, EditView, LinearLayout, Panel, SelectView, SliderView, TextView,
 	},
-	View,
+	Cursive, View,
 };
 use rand::seq::SliceRandom;
 
@@ -38,9 +37,16 @@ struct Chore {
 struct State {
 	name: String,
 	due: Vec<Chore>,
+	complete: Vec<Chore>,
+	obviated: Vec<Chore>,
+	abrogated: Vec<Chore>,
 }
 
 type SharedState = Rc<RefCell<State>>;
+
+fn get_shared_state(siv: &mut Cursive) -> SharedState {
+	siv.user_data::<SharedState>().unwrap().clone()
+}
 
 fn main() {
 	let due = vec![
@@ -63,23 +69,14 @@ fn main() {
 	let state = Rc::new(RefCell::new(State {
 		name: "Username".to_string(),
 		due,
+		complete: vec![],
+		obviated: vec![],
+		abrogated: vec![],
 	}));
 
 	let mut siv = cursive::default();
-	siv.add_layer(get_main_menu(state.clone()));
-	siv.add_global_callback(Key::Del, move |s| {
-		s.call_on_name("due-select", |due_select: &mut SelectView<usize>| {
-			if let Some(id) = due_select.selected_id() {
-				state.borrow_mut().due.remove(id);
-				due_select.remove_item(id);
-			}
-		});
-		s.add_layer(Dialog::info(format!(
-			"Now there are {} items: {:?}",
-			state.borrow().due.len(),
-			state.borrow().due,
-		)));
-	});
+	siv.set_user_data(state.clone());
+	siv.add_layer(get_main_menu(state));
 	siv.add_global_callback('q', |s| s.quit());
 	siv.run();
 }
@@ -111,6 +108,32 @@ fn get_main_menu(state: SharedState) -> impl View {
 			);
 			(label, idx)
 		}))
+		.on_submit(|s, _| {
+			s.add_layer(
+				Dialog::text("TODO: Show selected chore")
+					.button(
+						"Complete",
+						handle_due_chore(|state, chore| {
+							state.complete.push(chore);
+						}),
+					)
+					.button(
+						"Obviate",
+						handle_due_chore(|state, chore| {
+							state.obviated.push(chore);
+						}),
+					)
+					.button(
+						"Abrogate",
+						handle_due_chore(|state, chore| {
+							state.abrogated.push(chore);
+						}),
+					)
+					.button("Cancel", |s| {
+						s.pop_layer();
+					}),
+			);
+		})
 		.with_name("due-select")
 		.scrollable();
 	// Arrange everything vertically.
@@ -124,13 +147,26 @@ fn get_main_menu(state: SharedState) -> impl View {
 			// Due chores
 			.child(
 				LinearLayout::new(Orientation::Vertical)
-					.child(TextView::new(
-						"(c) complete (o) obviate (del) abrogate",
-					))
+					.child(TextView::new("Currently due chores"))
 					.child(due_select),
 			),
 	)
 	.title(title)
+}
+
+fn handle_due_chore(chore_cb: fn(&mut State, Chore)) -> impl Fn(&mut Cursive) {
+	move |s| {
+		s.pop_layer();
+		let shared_state = get_shared_state(s);
+		s.call_on_name("due-select", |due_select: &mut SelectView<usize>| {
+			if let Some(id) = due_select.selected_id() {
+				let mut state = shared_state.borrow_mut();
+				due_select.remove_item(id);
+				let chore = state.due.remove(id);
+				chore_cb(&mut state, chore);
+			}
+		});
+	}
 }
 
 fn get_add_chore(chores: &[Chore]) -> SelectView<usize> {
